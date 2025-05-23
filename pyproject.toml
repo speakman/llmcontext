@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llmcontext"
+dynamic = ["version"]  # Use dynamic versioning
+description = "Generates project context for LLMs, respecting .gitignore."
+readme = "README.md" 
+requires-python = ">=3.8" # Specify minimum Python version
+license = { text = "MIT" } 
+authors = [
+    { name = "Daniel Nyström", email = "daniel@nystrom.st" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
+]
+dependencies = [
+    # Current version uses only standard library modules
+    # For future versions, these might be needed:
+    # "pathspec >= 0.11.0",
+    # "python-magic-bin; sys_platform == 'win32'", 
+    # "python-magic; sys_platform != 'win32'",
+]
+
+[project.scripts]
+llmcontext = "llmcontext:main"
+
+[project.urls]
+"Homepage" = "https://github.com/speakman/llmcontext"
+"Bug Tracker" = "https://github.com/speakman/llmcontext/issues"
+
+[tool.setuptools.dynamic]
+version = {attr = "llmcontext.__version__"}

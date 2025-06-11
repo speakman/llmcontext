@@ -3,6 +3,7 @@
 [![PyPI version](https://badge.fury.io/py/llmcontext.svg)](https://badge.fury.io/py/llmcontext)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![CI](https://github.com/speakman/llmcontext/actions/workflows/ci.yml/badge.svg)](https://github.com/speakman/llmcontext/actions/workflows/ci.yml)
 
 `llmcontext` is a command-line tool that gathers all relevant files from a software project into a single text file. This text file is formatted for easy attachment to a Large Language Model (LLM) to provide it with the necessary context for analysis, refactoring, or Q&A about the project.
 
@@ -15,11 +16,11 @@ The tool intelligently excludes common non-source files, respects `.gitignore` p
   - Skips common version control, IDE, OS-specific, build artifact, and virtual environment directories/files by default.
   - Respects `.gitignore` files found in the project's root directory.
   - Allows custom exclusion patterns via command-line arguments.
-- **Binary File Handling:** Detects likely binary files and includes only their path and size, not their content.
-- **Markdown Formatting:** Source code content is wrapped in Markdown code blocks, with language hints based on file extensions.
-- **LLM-Ready Output:** The output is formatted for easy consumption by large language models.
-- **Optional Suggested Prompt:** A comprehensive LLM query can be printed to `stderr` on demand.
-- **Standard Library Only:** No external dependencies, making it easy to install and run.
+ - **Binary File Handling:** Detects likely binary files and includes metadata such as image dimensions or audio duration instead of raw content. Only Python modules are used; no external command-line tools are required.
+ - **Markdown Formatting:** Source code content is wrapped in Markdown code blocks, with language hints based on file extensions.
+ - **LLM-Ready Output:** The output is formatted for easy consumption by large language models.
+ - **Optional Suggested Prompt:** A comprehensive LLM query can be printed to `stderr` on demand.
+- **All Dependencies Included:** Uses Python libraries only and installs required packages (Pillow and mutagen) automatically.
 - **Cross-Platform:** Works on macOS, Linux, and Windows.
 
 ## Installation
@@ -162,6 +163,3 @@ Contributions are welcome! If you have suggestions for improvements or find a bu
 
 This project is licensed under the MIT License.
 
-```
-
-```

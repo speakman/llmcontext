@@ -15,6 +15,10 @@ from llmcontext.llmcontext import (
     should_exclude,
     read_gitignore_patterns,
     format_file_size,
+    get_binary_metadata,
+    extract_image_metadata,
+    extract_wav_metadata,
+    extract_audio_metadata,
     DEFAULT_EXCLUDES,
     BINARY_FILE_EXTENSIONS,
 )

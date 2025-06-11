@@ -11,6 +11,9 @@ import fnmatch
 import pathlib
 import sys
 import traceback
+import wave
+from PIL import Image
+from mutagen import File as _mutagen_file
 
 # --- Configuration ---
 
@@ -83,6 +86,10 @@ BINARY_FILE_EXTENSIONS = [
     ".ttf", ".otf", ".woff", ".woff2", ".eot",
 ]
 # fmt: on
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp", ".svg"}
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a"}
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv"}
 
 
 def is_likely_binary(filepath: pathlib.Path) -> bool:
@@ -218,6 +225,73 @@ def format_file_size(size_bytes: int) -> str:
     return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
+def extract_image_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
+    """Extract basic image geometry using Pillow."""
+    if filepath.suffix.lower() not in IMAGE_EXTENSIONS:
+        return None
+    try:
+        with Image.open(filepath) as img:
+            width, height = img.size
+            return {
+                "Format": img.format or filepath.suffix.lstrip(".").upper(),
+                "Width": str(width),
+                "Height": str(height),
+            }
+    except Exception:
+        return None
+
+
+def extract_audio_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
+    """Extract basic audio metadata using the wave module or mutagen."""
+    if filepath.suffix.lower() not in AUDIO_EXTENSIONS:
+        return None
+    if filepath.suffix.lower() == ".wav":
+        return extract_wav_metadata(filepath)
+    try:
+        m = _mutagen_file(str(filepath))
+        if m is None or not hasattr(m, "info"):
+            return None
+        info = m.info
+        meta: dict[str, str] = {"Format": filepath.suffix.lstrip(".").upper()}
+        if hasattr(info, "channels"):
+            meta["Channels"] = str(info.channels)
+        if hasattr(info, "length"):
+            meta["Duration"] = f"{info.length:.2f}s"
+        if hasattr(info, "sample_rate"):
+            meta["SampleRate"] = str(info.sample_rate)
+        return meta
+    except Exception:
+        return None
+
+
+def extract_wav_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
+    try:
+        with wave.open(str(filepath), "rb") as wf:
+            channels = wf.getnchannels()
+            framerate = wf.getframerate()
+            frames = wf.getnframes()
+            duration = frames / framerate if framerate else 0
+            return {
+                "Format": "WAV",
+                "Channels": str(channels),
+                "SampleRate": str(framerate),
+                "Duration": f"{duration:.2f}s",
+            }
+    except Exception:
+        return None
+
+
+def get_binary_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
+    ext = filepath.suffix.lower()
+    if ext in IMAGE_EXTENSIONS:
+        return extract_image_metadata(filepath)
+    if ext in AUDIO_EXTENSIONS:
+        meta = extract_audio_metadata(filepath)
+        if meta:
+            return meta
+    return None
+
+
 def generate_project_context(
     root_dir: pathlib.Path,
     cli_exclude_patterns: list[str],
@@ -326,6 +400,10 @@ def generate_project_context(
                             f"Size: {format_file_size(file_size)}",
                         ]
                     )
+                    extra_meta = get_binary_metadata(filepath_abs)
+                    if extra_meta:
+                        for k, v in extra_meta.items():
+                            combined_output_parts.append(f"{k}: {v}")
                 else:
                     try:
                         content = filepath_abs.read_text(
@@ -415,6 +493,11 @@ def main():
         "--verbose",
         action="store_true",
         help="Print detailed information about processed and excluded items to stderr.",
+    )
+    parser.add_argument(
+        "--show-prompt",
+        action="store_true",
+        help="Print a suggested detailed LLM query to stderr after processing.",
     )
     # Version argument
     parser.add_argument(

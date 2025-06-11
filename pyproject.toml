@@ -20,11 +20,8 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    # Current version uses only standard library modules
-    # For future versions, these might be needed:
-    # "pathspec >= 0.11.0",
-    # "python-magic-bin; sys_platform == 'win32'", 
-    # "python-magic; sys_platform != 'win32'",
+    "Pillow>=9.0",
+    "mutagen>=1.46",
 ]
 
 [project.scripts]

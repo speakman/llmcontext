@@ -45,12 +45,10 @@ def test_generate_context_and_cli(tmp_path: Path) -> None:
     assert "hello" in ctx
 
     out_file = tmp_path / "out.txt"
-    proc = subprocess.run([
-        sys.executable,
-        "-m",
-        "llmcontext.llmcontext",
-        str(tmp_path),
-        str(out_file),
-    ], capture_output=True, text=True)
+    proc = subprocess.run(
+        [sys.executable, "-m", "llmcontext", str(tmp_path), str(out_file)],
+        capture_output=True,
+        text=True,
+    )
     assert proc.returncode == 0
     assert out_file.read_text().startswith("--- START PROJECT CONTEXT ---")

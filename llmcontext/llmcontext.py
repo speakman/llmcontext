@@ -12,8 +12,11 @@ import pathlib
 import sys
 import traceback
 import wave
+import logging
 from PIL import Image
 from mutagen import File as _mutagen_file
+
+logger = logging.getLogger(__name__)
 
 # --- Configuration ---
 
@@ -212,7 +215,7 @@ def read_gitignore_patterns(root_dir: pathlib.Path) -> list[str]:
                     if stripped and not stripped.startswith("#"):
                         patterns.append(stripped)
         except OSError as e:
-            print(f"Warning: Could not read .gitignore: {e}", file=sys.stderr)
+            logger.warning("Could not read .gitignore: %s", e)
     return patterns
 
 
@@ -324,9 +327,10 @@ def generate_project_context(
             else:
                 excluded_items_count += 1
                 if verbose:
-                    print(
-                        f"Excluding directory: {dir_rel_loop.as_posix()} (Reason: {reason})",
-                        file=sys.stderr,
+                    logger.info(
+                        "Excluding directory: %s (Reason: %s)",
+                        dir_rel_loop.as_posix(),
+                        reason,
                     )
 
         for filename in filenames:
@@ -339,17 +343,17 @@ def generate_project_context(
 
             if script_abs_path.exists() and filepath_abs == script_abs_path:
                 if verbose:
-                    print(
-                        f"Excluding self (script): {filepath_rel_posix}",
-                        file=sys.stderr,
+                    logger.info(
+                        "Excluding self (script): %s",
+                        filepath_rel_posix,
                     )
                 excluded_items_count += 1
                 continue
             if output_file_abs and filepath_abs == output_file_abs:
                 if verbose:
-                    print(
-                        f"Excluding self (output file): {filepath_rel_posix}",
-                        file=sys.stderr,
+                    logger.info(
+                        "Excluding self (output file): %s",
+                        filepath_rel_posix,
                     )
                 excluded_items_count += 1
                 continue
@@ -370,17 +374,20 @@ def generate_project_context(
                         if is_py
                         else ""
                     )
-                    print(
-                        f"Excluding file: {filepath_rel_posix} (Reason: {reason}){py_diag}",
-                        file=sys.stderr,
+                    logger.info(
+                        "Excluding file: %s (Reason: %s)%s",
+                        filepath_rel_posix,
+                        reason,
+                        py_diag,
                     )
                 continue
 
             try:
                 if not filepath_abs.is_file():
                     if verbose:
-                        print(
-                            f"Skipping non-file: {filepath_rel_posix}", file=sys.stderr
+                        logger.info(
+                            "Skipping non-file: %s",
+                            filepath_rel_posix,
                         )
                     excluded_items_count += 1
                     continue
@@ -430,25 +437,28 @@ def generate_project_context(
 
             except OSError as e:
                 if verbose:
-                    print(
-                        f"Warning: Could not access/process file {filepath_rel_posix}: {e}",
-                        file=sys.stderr,
+                    logger.info(
+                        "Warning: Could not access/process file %s: %s",
+                        filepath_rel_posix,
+                        e,
                     )
                 excluded_items_count += 1
             except Exception as e:
                 if verbose:
-                    print(
-                        f"Warning: Unexpected error processing file {filepath_rel_posix}: {e}",
-                        file=sys.stderr,
+                    logger.info(
+                        "Warning: Unexpected error processing file %s: %s",
+                        filepath_rel_posix,
+                        e,
                     )
                 excluded_items_count += 1
 
     combined_output_parts.extend(["--- END PROJECT CONTEXT ---"])
 
     if verbose or processed_files_count > 0 or excluded_items_count > 0:
-        print(
-            f"\nProcessed {processed_files_count} files, excluded {excluded_items_count} files/directories.",
-            file=sys.stderr,
+        logger.info(
+            "Processed %s files, excluded %s files/directories.",
+            processed_files_count,
+            excluded_items_count,
         )
     return "\n".join(combined_output_parts)
 
@@ -456,6 +466,7 @@ def generate_project_context(
 def main():
     """Command line interface entry point"""
     parser = argparse.ArgumentParser(
+        prog="llmcontext",
         description="Gather project files into a single text block for LLM context",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
@@ -508,18 +519,22 @@ def main():
 
     args = parser.parse_args()
 
+    logging.basicConfig(
+        level=logging.INFO if args.verbose else logging.WARNING,
+        format="%(message)s",
+        stream=sys.stderr,
+    )
+
     try:
         root_dir_abs = args.root_dir.resolve(strict=True)
     except FileNotFoundError:
-        print(
-            f"Error: Root directory '{args.root_dir}' not found or is not accessible.",
-            file=sys.stderr,
+        logger.error(
+            "Error: Root directory '%s' not found or is not accessible.",
+            args.root_dir,
         )
         sys.exit(1)
     if not root_dir_abs.is_dir():
-        print(
-            f"Error: Root path '{args.root_dir}' is not a directory.", file=sys.stderr
-        )
+        logger.error("Error: Root path '%s' is not a directory.", args.root_dir)
         sys.exit(1)
 
     output_file_abs_path = None
@@ -531,19 +546,27 @@ def main():
             root_dir_abs, args.exclude, output_file_abs_path, args.verbose
         )
 
+        token_estimate = len(output_text.split())
+        if token_estimate > 1_000_000:
+            logger.warning(
+                "Generated context is approximately %s tokens which may exceed typical LLM limits",
+                token_estimate,
+            )
+
         if output_file_abs_path:
             try:
                 output_file_abs_path.parent.mkdir(parents=True, exist_ok=True)
                 output_file_abs_path.write_text(output_text, encoding="utf-8")
                 if args.verbose:
-                    print(
-                        f"Output successfully written to: {output_file_abs_path}",
-                        file=sys.stderr,
+                    logger.info(
+                        "Output successfully written to: %s",
+                        output_file_abs_path,
                     )
             except IOError as e:
-                print(
-                    f"Error: Could not write to output file {output_file_abs_path}: {e}",
-                    file=sys.stderr,
+                logger.error(
+                    "Error: Could not write to output file %s: %s",
+                    output_file_abs_path,
+                    e,
                 )
                 sys.exit(1)
         else:
@@ -617,7 +640,7 @@ Let's explore how to elevate this project further!
             print("-" * 80, file=sys.stderr)
 
     except Exception as e:
-        print(f"\nAn unexpected error occurred: {e}", file=sys.stderr)
+        logger.error("An unexpected error occurred: %s", e)
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 

@@ -24,6 +24,9 @@ dependencies = [
     "mutagen>=1.46",
 ]
 
+[project.optional-dependencies]
+test = ["pytest"]
+
 [project.scripts]
 llmcontext = "llmcontext:main"
 

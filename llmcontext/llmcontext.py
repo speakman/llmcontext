@@ -200,11 +200,10 @@ def read_gitignore_patterns(root_dir: pathlib.Path) -> list[str]:
     if gitignore_path.exists() and gitignore_path.is_file():
         try:
             with open(gitignore_path, "r", encoding="utf-8", errors="ignore") as f:
-                patterns.extend(
-                    line.strip()
-                    for line in f
-                    if line.strip() and not line.startswith("#")
-                )
+                for line in f:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#"):
+                        patterns.append(stripped)
         except OSError as e:
             print(f"Warning: Could not read .gitignore: {e}", file=sys.stderr)
     return patterns
@@ -415,6 +414,11 @@ def main():
         "--verbose",
         action="store_true",
         help="Print detailed information about processed and excluded items to stderr.",
+    )
+    parser.add_argument(
+        "--show-prompt",
+        action="store_true",
+        help="Print a suggested detailed LLM query to stderr after processing.",
     )
     # Version argument
     parser.add_argument(

@@ -155,6 +155,15 @@ llmcontext [ROOT_DIR] [OUTPUT_FILE] [OPTIONS]
 
 - **Target Specific Directories:** For large projects, consider running `llmcontext` on specific subdirectories rather than the entire project to focus the LLM's attention on relevant components.
 
+## Running Tests
+
+Install the optional test dependencies and run the suite with `pytest`:
+
+```bash
+python -m pip install -e .[test]
+pytest -q
+```
+
 ## Contributing
 
 Contributions are welcome! If you have suggestions for improvements or find a bug, please open an issue or submit a pull request to the [GitHub repository](https://github.com/speakman/llmcontext).

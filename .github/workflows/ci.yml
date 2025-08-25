@@ -38,20 +38,29 @@ jobs:
           python -m pip install pipx
       
       - name: Test pipx installation
+        if: matrix.python-version >= '3.10'
         run: |
-          pipx install .
+          pipx install . --python $(which python)
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       
-      - name: Verify CLI installation
+      - name: Verify CLI installation (pipx)
+        if: matrix.python-version >= '3.10'
         run: |
           llmcontext --version
           llmcontext --help
+      
+      - name: Test direct Python execution (older versions)
+        if: matrix.python-version < '3.10'
+        run: |
+          python -m llmcontext --version
+          python -m llmcontext --help
       
       - name: Run tests
         run: |
           pytest -v --tb=short
       
-      - name: Test CLI functionality
+      - name: Test CLI functionality (pipx)
+        if: matrix.python-version >= '3.10'
         run: |
           # Test basic functionality
           llmcontext . /tmp/test_output.txt
@@ -59,4 +68,15 @@ jobs:
           
           # Test verbose mode
           llmcontext -v . > /dev/null 2>&1
+          echo "Verbose mode test completed"
+      
+      - name: Test CLI functionality (direct Python)
+        if: matrix.python-version < '3.10'
+        run: |
+          # Test basic functionality
+          python -m llmcontext . /tmp/test_output.txt
+          [ -f /tmp/test_output.txt ] && echo "Output file created successfully"
+          
+          # Test verbose mode
+          python -m llmcontext -v . > /dev/null 2>&1
           echo "Verbose mode test completed"

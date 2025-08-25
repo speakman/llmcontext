@@ -304,6 +304,10 @@ def generate_project_context(
     combined_output_parts = ["--- START PROJECT CONTEXT ---"]
     processed_files_count = 0
     excluded_items_count = 0
+    
+    # Statistics for verbose mode
+    excluded_items = []  # List of (path, reason) tuples
+    file_sizes = []  # List of (path, size) tuples for processed files
 
     script_abs_path = pathlib.Path(__file__).resolve(strict=False)
 
@@ -326,6 +330,7 @@ def generate_project_context(
                 dirnames.append(d_name)
             else:
                 excluded_items_count += 1
+                excluded_items.append((dir_rel_loop.as_posix(), reason))
                 if verbose:
                     logger.info(
                         "Excluding directory: %s (Reason: %s)",
@@ -342,20 +347,22 @@ def generate_project_context(
             filepath_rel_posix = filepath_rel.as_posix()
 
             if script_abs_path.exists() and filepath_abs == script_abs_path:
+                excluded_items_count += 1
+                excluded_items.append((filepath_rel_posix, "Self (script)"))
                 if verbose:
                     logger.info(
                         "Excluding self (script): %s",
                         filepath_rel_posix,
                     )
-                excluded_items_count += 1
                 continue
             if output_file_abs and filepath_abs == output_file_abs:
+                excluded_items_count += 1
+                excluded_items.append((filepath_rel_posix, "Self (output file)"))
                 if verbose:
                     logger.info(
                         "Excluding self (output file): %s",
                         filepath_rel_posix,
                     )
-                excluded_items_count += 1
                 continue
 
             is_excluded, reason = should_exclude(
@@ -367,6 +374,7 @@ def generate_project_context(
             )
             if is_excluded:
                 excluded_items_count += 1
+                excluded_items.append((filepath_rel_posix, reason))
                 if verbose:
                     is_py = filepath_rel.suffix.lower() == ".py"
                     py_diag = (
@@ -384,16 +392,18 @@ def generate_project_context(
 
             try:
                 if not filepath_abs.is_file():
+                    excluded_items_count += 1
+                    excluded_items.append((filepath_rel_posix, "Non-file"))
                     if verbose:
                         logger.info(
                             "Skipping non-file: %s",
                             filepath_rel_posix,
                         )
-                    excluded_items_count += 1
                     continue
 
                 file_size = filepath_abs.stat().st_size
                 is_binary = is_likely_binary(filepath_abs)
+                file_sizes.append((filepath_rel_posix, file_size))
                 combined_output_parts.append(
                     f"--- START FILE: {filepath_rel_posix} ---"
                 )
@@ -436,30 +446,66 @@ def generate_project_context(
                 processed_files_count += 1
 
             except OSError as e:
+                excluded_items_count += 1
+                excluded_items.append((filepath_rel_posix, f"OSError: {e}"))
                 if verbose:
                     logger.info(
                         "Warning: Could not access/process file %s: %s",
                         filepath_rel_posix,
                         e,
                     )
-                excluded_items_count += 1
             except Exception as e:
+                excluded_items_count += 1
+                excluded_items.append((filepath_rel_posix, f"Error: {e}"))
                 if verbose:
                     logger.info(
                         "Warning: Unexpected error processing file %s: %s",
                         filepath_rel_posix,
                         e,
                     )
-                excluded_items_count += 1
 
     combined_output_parts.extend(["--- END PROJECT CONTEXT ---"])
 
+    # Print summary statistics
     if verbose or processed_files_count > 0 or excluded_items_count > 0:
         logger.info(
             "Processed %s files, excluded %s files/directories.",
             processed_files_count,
             excluded_items_count,
         )
+
+    # Print detailed verbose information
+    if verbose:
+        # Print excluded items summary
+        if excluded_items:
+            logger.info("\n--- EXCLUDED FILES AND DIRECTORIES ---")
+            for path, reason in excluded_items:
+                logger.info("  %s - %s", path, reason)
+        
+        # Print top 10 largest files by size
+        if file_sizes:
+            logger.info("\n--- TOP 10 LARGEST FILES ---")
+            sorted_files = sorted(file_sizes, key=lambda x: x[1], reverse=True)[:10]
+            for path, size in sorted_files:
+                logger.info("  %s - %s", format_file_size(size), path)
+        
+        # Print file type distribution
+        file_types = {}
+        for path, _ in file_sizes:
+            ext = pathlib.Path(path).suffix.lower() or "no extension"
+            file_types[ext] = file_types.get(ext, 0) + 1
+        
+        if file_types:
+            logger.info("\n--- FILE TYPE DISTRIBUTION ---")
+            sorted_types = sorted(file_types.items(), key=lambda x: x[1], reverse=True)
+            for ext, count in sorted_types:
+                logger.info("  %s: %d files", ext, count)
+        
+        # Print total size of processed files
+        total_size = sum(size for _, size in file_sizes)
+        logger.info("\n--- TOTAL SIZE OF PROCESSED FILES ---")
+        logger.info("  %s", format_file_size(total_size))
+
     return "\n".join(combined_output_parts)
 
 

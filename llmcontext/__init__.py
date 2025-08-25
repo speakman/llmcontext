@@ -6,7 +6,7 @@ project into a single text file formatted for easy attachment to a Large Languag
 Model (LLM).
 """
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 from llmcontext.llmcontext import (
     main,

@@ -13,6 +13,7 @@ import sys
 import traceback
 import wave
 import logging
+from typing import Optional, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -129,10 +130,10 @@ def is_likely_binary(filepath: pathlib.Path) -> bool:
 def should_exclude(
     path_obj_rel: pathlib.Path,
     path_obj_abs: pathlib.Path,
-    gitignore_patterns: list[str],
-    default_excludes: list[str],
-    additional_cli_excludes: list[str],
-) -> tuple[bool, str]:
+    gitignore_patterns: List[str],
+    default_excludes: List[str],
+    additional_cli_excludes: List[str],
+) -> Tuple[bool, str]:
     """Determine if a path should be excluded based on exclusion patterns.
 
     Returns tuple of (exclusion_decision, reason_string)
@@ -211,7 +212,7 @@ def should_exclude(
     return False, ""
 
 
-def read_gitignore_patterns(root_dir: pathlib.Path) -> list[str]:
+def read_gitignore_patterns(root_dir: pathlib.Path) -> List[str]:
     patterns = []
     gitignore_path = root_dir / ".gitignore"
     if gitignore_path.exists() and gitignore_path.is_file():
@@ -234,7 +235,7 @@ def format_file_size(size_bytes: int) -> str:
     return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
-def extract_image_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
+def extract_image_metadata(filepath: pathlib.Path) -> Optional[Dict[str, str]]:
     """Extract basic image geometry using Pillow."""
     if filepath.suffix.lower() not in IMAGE_EXTENSIONS:
         return None
@@ -254,7 +255,7 @@ def extract_image_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
         return None
 
 
-def extract_audio_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
+def extract_audio_metadata(filepath: pathlib.Path) -> Optional[Dict[str, str]]:
     """Extract basic audio metadata using the wave module or mutagen."""
     if filepath.suffix.lower() not in AUDIO_EXTENSIONS:
         return None
@@ -266,7 +267,7 @@ def extract_audio_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
         if m is None or not hasattr(m, "info"):
             return None
         info = m.info
-        meta: dict[str, str] = {"Format": filepath.suffix.lstrip(".").upper()}
+        meta: Dict[str, str] = {"Format": filepath.suffix.lstrip(".").upper()}
         if hasattr(info, "channels"):
             meta["Channels"] = str(info.channels)
         if hasattr(info, "length"):
@@ -281,7 +282,7 @@ def extract_audio_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
         return None
 
 
-def extract_wav_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
+def extract_wav_metadata(filepath: pathlib.Path) -> Optional[Dict[str, str]]:
     try:
         with wave.open(str(filepath), "rb") as wf:
             channels = wf.getnchannels()
@@ -298,7 +299,7 @@ def extract_wav_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
         return None
 
 
-def get_binary_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
+def get_binary_metadata(filepath: pathlib.Path) -> Optional[Dict[str, str]]:
     ext = filepath.suffix.lower()
     if ext in IMAGE_EXTENSIONS:
         return extract_image_metadata(filepath)
@@ -311,8 +312,8 @@ def get_binary_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
 
 def generate_project_context(
     root_dir: pathlib.Path,
-    cli_exclude_patterns: list[str],
-    output_file_abs: pathlib.Path | None,
+    cli_exclude_patterns: List[str],
+    output_file_abs: Optional[pathlib.Path],
     verbose: bool = False,
 ) -> str:
     gitignore_patterns = read_gitignore_patterns(root_dir)

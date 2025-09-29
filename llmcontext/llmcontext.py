@@ -13,10 +13,17 @@ import sys
 import traceback
 import wave
 import logging
-from PIL import Image
-from mutagen import File as _mutagen_file
 
 logger = logging.getLogger(__name__)
+
+
+def get_version():
+    """Get package version from metadata."""
+    try:
+        from importlib.metadata import version
+        return version("llmcontext")
+    except Exception:
+        return "unknown"
 
 # --- Configuration ---
 
@@ -232,6 +239,7 @@ def extract_image_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
     if filepath.suffix.lower() not in IMAGE_EXTENSIONS:
         return None
     try:
+        from PIL import Image
         with Image.open(filepath) as img:
             width, height = img.size
             return {
@@ -239,6 +247,9 @@ def extract_image_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
                 "Width": str(width),
                 "Height": str(height),
             }
+    except ImportError:
+        # PIL not available, return basic info
+        return {"Format": filepath.suffix.lstrip(".").upper()}
     except Exception:
         return None
 
@@ -250,6 +261,7 @@ def extract_audio_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
     if filepath.suffix.lower() == ".wav":
         return extract_wav_metadata(filepath)
     try:
+        from mutagen import File as _mutagen_file
         m = _mutagen_file(str(filepath))
         if m is None or not hasattr(m, "info"):
             return None
@@ -262,6 +274,9 @@ def extract_audio_metadata(filepath: pathlib.Path) -> dict[str, str] | None:
         if hasattr(info, "sample_rate"):
             meta["SampleRate"] = str(info.sample_rate)
         return meta
+    except ImportError:
+        # mutagen not available, return basic info
+        return {"Format": filepath.suffix.lstrip(".").upper()}
     except Exception:
         return None
 
@@ -559,7 +574,7 @@ def main():
     parser.add_argument(
         "--version",
         action="version",
-        version=f"%(prog)s {__import__('llmcontext').__version__}",
+        version=f"%(prog)s {get_version()}",
         help="Show the version number and exit",
     )
 

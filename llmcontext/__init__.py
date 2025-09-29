@@ -6,7 +6,11 @@ project into a single text file formatted for easy attachment to a Large Languag
 Model (LLM).
 """
 
-__version__ = "0.2.1"
+try:
+    from importlib.metadata import version
+    __version__ = version("llmcontext")
+except Exception:
+    __version__ = "unknown"
 
 from llmcontext.llmcontext import (
     main,

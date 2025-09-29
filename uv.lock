@@ -39,6 +39,7 @@ wheels = [
 
 [[package]]
 name = "llmcontext"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "mutagen" },

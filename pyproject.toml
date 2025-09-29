@@ -1,20 +1,19 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0.0"]  # Version that fully supports SPDX license
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "llmcontext"
-dynamic = ["version"]  # Use dynamic versioning
+version = "0.2.2"
 description = "Generates project context for LLMs, respecting .gitignore."
 readme = "README.md" 
 requires-python = ">=3.8" # Specify minimum Python version
-license = { text = "MIT" } 
+license = "MIT"  # Modern SPDX format
 authors = [
     { name = "Daniel Nyström", email = "daniel@nystrom.st" },
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Software Development",
     "Topic :: Utilities",
@@ -33,6 +32,3 @@ llmcontext = "llmcontext:main"
 [project.urls]
 "Homepage" = "https://github.com/speakman/llmcontext"
 "Bug Tracker" = "https://github.com/speakman/llmcontext/issues"
-
-[tool.setuptools.dynamic]
-version = {attr = "llmcontext.__version__"}

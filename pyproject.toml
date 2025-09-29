@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77.0.0"]  # Version that fully supports SPDX license
+requires = ["setuptools>=61.0"]  # Compatible with Python 3.8+
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,7 @@ version = "0.2.2"
 description = "Generates project context for LLMs, respecting .gitignore."
 readme = "README.md" 
 requires-python = ">=3.8" # Specify minimum Python version
-license = "MIT"  # Modern SPDX format
+license = { text = "MIT" }  # TOML table format for Python 3.8 compatibility
 authors = [
     { name = "Daniel Nyström", email = "daniel@nystrom.st" },
 ]

@@ -602,7 +602,7 @@ def main():
         if output_file_abs_path:
             try:
                 output_file_abs_path.parent.mkdir(parents=True, exist_ok=True)
-                output_file_abs_path.write_text(output_text, encoding="utf-8")
+                output_file_abs_path.write_text(output_text, encoding="utf-8", errors="surrogateescape")
                 if args.verbose:
                     logger.info(
                         "Output successfully written to: %s",

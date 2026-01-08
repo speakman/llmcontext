@@ -11,20 +11,18 @@ import fnmatch
 import pathlib
 import sys
 import traceback
-import wave
 import logging
 from typing import Optional, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
 
-def get_version():
+def get_version() -> str:
     """Get package version from metadata."""
-    try:
-        from importlib.metadata import version
-        return version("llmcontext")
-    except Exception:
-        return "unknown"
+    from importlib.metadata import version
+
+    return version("llmcontext")
+
 
 # --- Configuration ---
 
@@ -122,9 +120,203 @@ def is_likely_binary(filepath: pathlib.Path) -> bool:
             chunk = f.read(BINARY_CHECK_CHUNK_SIZE)
         return b"\x00" in chunk
     except OSError:
+        # File access issues (permissions, etc.) - assume binary to be safe
         return True
-    except Exception:
+
+
+def fnmatch_with_doublestar(path: str, pattern: str) -> bool:
+    """Match path against pattern with ** support for any directory depth.
+
+    Extends fnmatch to support gitignore-style ** patterns:
+    - **/foo matches foo anywhere in the tree
+    - foo/** matches everything inside foo/ recursively
+    - a/**/b matches a/b, a/x/b, a/x/y/b, etc.
+
+    Args:
+        path: The path to match (should use / as separator)
+        pattern: The pattern to match against
+
+    Returns:
+        True if the path matches the pattern
+    """
+    if "**" not in pattern:
+        return fnmatch.fnmatch(path, pattern)
+
+    # Handle **/suffix (match suffix anywhere in tree)
+    if pattern.startswith("**/"):
+        suffix = pattern[3:]
+        parts = path.split("/")
+        for i in range(len(parts)):
+            candidate = "/".join(parts[i:])
+            if fnmatch.fnmatch(candidate, suffix):
+                return True
+        return False
+
+    # Handle prefix/** (match anything under prefix recursively)
+    if pattern.endswith("/**"):
+        prefix = pattern[:-3]
+        if fnmatch.fnmatch(path, prefix):
+            return True
+        # Check if path is inside the prefix directory
+        parts = path.split("/")
+        for i in range(1, len(parts)):
+            partial = "/".join(parts[:i])
+            if fnmatch.fnmatch(partial, prefix):
+                return True
+        return False
+
+    # Handle prefix/**/suffix (match with any depth between)
+    if "/**/" in pattern:
+        before, after = pattern.split("/**/", 1)
+        parts = path.split("/")
+
+        # Determine how many parts 'before' and 'after' consume
+        before_parts = before.split("/") if before else []
+        after_parts = after.split("/") if after else []
+
+        # Path must have at least as many parts as before + after
+        if len(parts) < len(before_parts) + len(after_parts):
+            return False
+
+        # Check if beginning matches 'before'
+        if before_parts:
+            path_before = "/".join(parts[: len(before_parts)])
+            if not fnmatch.fnmatch(path_before, before):
+                return False
+
+        # Check if end matches 'after'
+        if after_parts:
+            path_after = "/".join(parts[-len(after_parts) :])
+            if not fnmatch.fnmatch(path_after, after):
+                return False
+
         return True
+
+    # Fallback to regular fnmatch
+    return fnmatch.fnmatch(path, pattern)
+
+
+def _matches_default_excludes(
+    path_obj_rel: pathlib.Path, default_excludes: List[str]
+) -> Optional[str]:
+    """Check if path matches any default exclusion pattern.
+
+    Returns the matching pattern or None.
+    """
+    path_name = path_obj_rel.name
+    for pattern in default_excludes:
+        if fnmatch.fnmatch(path_name, pattern):
+            return f"Default exclude: {pattern}"
+        for part in path_obj_rel.parts:
+            if fnmatch.fnmatch(part, pattern):
+                return f"Default exclude: {pattern}"
+    return None
+
+
+def _matches_cli_excludes(
+    path_obj_rel: pathlib.Path, cli_excludes: List[str]
+) -> Optional[str]:
+    """Check if path matches any CLI exclusion pattern.
+
+    Returns the matching pattern or None.
+    """
+    path_name = path_obj_rel.name
+    path_str_rel_posix = path_obj_rel.as_posix()
+    for pattern in cli_excludes:
+        if fnmatch_with_doublestar(path_str_rel_posix, pattern):
+            return f"CLI Exclude (path: {pattern})"
+        if fnmatch_with_doublestar(path_name, pattern):
+            return f"CLI Exclude (name: {pattern})"
+    return None
+
+
+def _matches_gitignore_pattern(
+    path_obj_rel: pathlib.Path,
+    is_dir: bool,
+    git_pattern_orig: str,
+) -> Optional[str]:
+    """Check if path matches a single gitignore pattern.
+
+    Returns the reason string if matched, None otherwise.
+    """
+    git_pattern = git_pattern_orig.strip()
+    if not git_pattern or git_pattern.startswith("#"):
+        return None
+
+    path_name = path_obj_rel.name
+    path_str = path_obj_rel.as_posix()
+    parts = path_obj_rel.parts
+
+    anchored = git_pattern.startswith("/")
+    if anchored:
+        git_pattern = git_pattern.lstrip("/")
+
+    dir_pattern = git_pattern.endswith("/")
+    if dir_pattern:
+        git_pattern = git_pattern.rstrip("/")
+
+    if anchored:
+        # Anchored patterns only match from root
+        if fnmatch_with_doublestar(path_str, git_pattern):
+            if dir_pattern:
+                if is_dir:
+                    return f".gitignore (anchored dir: {git_pattern_orig})"
+            else:
+                return f".gitignore (anchored file: {git_pattern_orig})"
+        # Check if path is inside a matching anchored directory
+        if dir_pattern:
+            for i in range(1, len(parts) + 1):
+                partial = "/".join(parts[:i])
+                if fnmatch_with_doublestar(partial, git_pattern):
+                    return f".gitignore (in anchored dir: {git_pattern_orig})"
+    else:
+        # Unanchored patterns
+        has_path_sep = "/" in git_pattern or "**" in git_pattern
+
+        if dir_pattern:
+            if has_path_sep:
+                if fnmatch_with_doublestar(path_str, git_pattern) and is_dir:
+                    return f".gitignore (unanchored dir pattern: {git_pattern_orig})"
+                for i in range(1, len(parts) + 1):
+                    partial = "/".join(parts[:i])
+                    if fnmatch_with_doublestar(partial, git_pattern):
+                        return f".gitignore (in unanchored dir: {git_pattern_orig})"
+            else:
+                # Simple directory name pattern
+                if fnmatch_with_doublestar(path_name, git_pattern) and is_dir:
+                    return f".gitignore (unanchored dir name: {git_pattern_orig})"
+                for idx, part in enumerate(parts):
+                    if fnmatch_with_doublestar(part, git_pattern):
+                        if idx < len(parts) - 1:
+                            return f".gitignore (in unanchored dir: {git_pattern_orig})"
+                        elif is_dir:
+                            return f".gitignore (unanchored dir itself: {git_pattern_orig})"
+        else:
+            # File pattern
+            if has_path_sep:
+                if fnmatch_with_doublestar(path_str, git_pattern):
+                    return f".gitignore (relative path pattern: {git_pattern_orig})"
+            else:
+                if fnmatch_with_doublestar(path_name, git_pattern):
+                    return f".gitignore (basename pattern: {git_pattern_orig})"
+
+    return None
+
+
+def _matches_gitignore(
+    path_obj_rel: pathlib.Path,
+    is_dir: bool,
+    gitignore_patterns: List[str],
+) -> Optional[str]:
+    """Check if path matches any gitignore pattern.
+
+    Returns the matching pattern or None.
+    """
+    for pattern in gitignore_patterns:
+        reason = _matches_gitignore_pattern(path_obj_rel, is_dir, pattern)
+        if reason:
+            return reason
+    return None
 
 
 def should_exclude(
@@ -136,79 +328,21 @@ def should_exclude(
 ) -> Tuple[bool, str]:
     """Determine if a path should be excluded based on exclusion patterns.
 
-    Returns tuple of (exclusion_decision, reason_string)
+    Checks patterns in order: default excludes, CLI excludes, gitignore.
+    Returns tuple of (excluded, reason_string).
     """
-    path_name = path_obj_rel.name
-    path_str_rel_posix = path_obj_rel.as_posix()
+    reason = _matches_default_excludes(path_obj_rel, default_excludes)
+    if reason:
+        return True, reason
 
-    # Check default exclusion patterns
-    for pattern in default_excludes:
-        if (
-            fnmatch.fnmatch(path_name, pattern)
-            or path_name == pattern
-            or pattern in path_obj_rel.parts
-        ):
-            return True, f"Default exclude: {pattern}"
+    reason = _matches_cli_excludes(path_obj_rel, additional_cli_excludes)
+    if reason:
+        return True, reason
 
-    for pattern_val in additional_cli_excludes:
-        if fnmatch.fnmatch(path_str_rel_posix, pattern_val):
-            return True, f"CLI Exclude (path: {pattern_val})"
-        if fnmatch.fnmatch(path_name, pattern_val):
-            return True, f"CLI Exclude (name: {pattern_val})"
+    reason = _matches_gitignore(path_obj_rel, path_obj_abs.is_dir(), gitignore_patterns)
+    if reason:
+        return True, reason
 
-    is_current_item_dir = path_obj_abs.is_dir()
-    for git_pattern_orig in gitignore_patterns:
-        git_pattern = git_pattern_orig.strip()
-        if not git_pattern or git_pattern.startswith("#"):
-            continue
-
-        anchored_pattern = git_pattern.startswith("/")
-        if anchored_pattern:
-            git_pattern = git_pattern.lstrip("/")
-
-        is_dir_pattern = git_pattern.endswith("/")
-        if is_dir_pattern:
-            git_pattern = git_pattern.rstrip("/")
-
-        if anchored_pattern:
-            if path_str_rel_posix == git_pattern or path_str_rel_posix.startswith(
-                git_pattern + "/"
-            ):
-                if is_dir_pattern:
-                    return True, f".gitignore (anchored dir: {git_pattern_orig})"
-                elif path_str_rel_posix == git_pattern:
-                    return True, f".gitignore (anchored file: {git_pattern_orig})"
-        else:
-            if is_dir_pattern:
-                if path_name == git_pattern and is_current_item_dir:
-                    return True, f".gitignore (unanchored dir name: {git_pattern_orig})"
-                try:
-                    idx = path_obj_rel.parts.index(git_pattern)
-                    if idx < len(path_obj_rel.parts) - 1:
-                        return (
-                            True,
-                            f".gitignore (in unanchored dir: {git_pattern_orig})",
-                        )
-                    elif is_current_item_dir:
-                        return (
-                            True,
-                            f".gitignore (unanchored dir itself: {git_pattern_orig})",
-                        )
-                except ValueError:
-                    pass
-            else:
-                if "/" in git_pattern:
-                    if fnmatch.fnmatch(path_str_rel_posix, git_pattern):
-                        return (
-                            True,
-                            f".gitignore (relative path pattern: {git_pattern_orig})",
-                        )
-                else:
-                    if fnmatch.fnmatch(path_name, git_pattern):
-                        return (
-                            True,
-                            f".gitignore (basename pattern: {git_pattern_orig})",
-                        )
     return False, ""
 
 
@@ -235,24 +369,37 @@ def format_file_size(size_bytes: int) -> str:
     return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
+def estimate_tokens(text: str) -> int:
+    """Estimate token count using chars/4 heuristic.
+
+    This is a rough approximation that works reasonably well for code
+    without requiring external dependencies like tiktoken.
+    """
+    return len(text) // 4
+
+
+def format_token_count(tokens: int) -> str:
+    """Format token count for display."""
+    if tokens < 1000:
+        return str(tokens)
+    if tokens < 1_000_000:
+        return f"{tokens / 1000:.1f}K"
+    return f"{tokens / 1_000_000:.2f}M"
+
+
 def extract_image_metadata(filepath: pathlib.Path) -> Optional[Dict[str, str]]:
     """Extract basic image geometry using Pillow."""
     if filepath.suffix.lower() not in IMAGE_EXTENSIONS:
         return None
-    try:
-        from PIL import Image
-        with Image.open(filepath) as img:
-            width, height = img.size
-            return {
-                "Format": img.format or filepath.suffix.lstrip(".").upper(),
-                "Width": str(width),
-                "Height": str(height),
-            }
-    except ImportError:
-        # PIL not available, return basic info
-        return {"Format": filepath.suffix.lstrip(".").upper()}
-    except Exception:
-        return None
+    from PIL import Image
+
+    with Image.open(filepath) as img:
+        width, height = img.size
+        return {
+            "Format": img.format or filepath.suffix.lstrip(".").upper(),
+            "Width": str(width),
+            "Height": str(height),
+        }
 
 
 def extract_audio_metadata(filepath: pathlib.Path) -> Optional[Dict[str, str]]:
@@ -261,42 +408,37 @@ def extract_audio_metadata(filepath: pathlib.Path) -> Optional[Dict[str, str]]:
         return None
     if filepath.suffix.lower() == ".wav":
         return extract_wav_metadata(filepath)
-    try:
-        from mutagen import File as _mutagen_file
-        m = _mutagen_file(str(filepath))
-        if m is None or not hasattr(m, "info"):
-            return None
-        info = m.info
-        meta: Dict[str, str] = {"Format": filepath.suffix.lstrip(".").upper()}
-        if hasattr(info, "channels"):
-            meta["Channels"] = str(info.channels)
-        if hasattr(info, "length"):
-            meta["Duration"] = f"{info.length:.2f}s"
-        if hasattr(info, "sample_rate"):
-            meta["SampleRate"] = str(info.sample_rate)
-        return meta
-    except ImportError:
-        # mutagen not available, return basic info
-        return {"Format": filepath.suffix.lstrip(".").upper()}
-    except Exception:
+    from mutagen import File as _mutagen_file
+
+    m = _mutagen_file(str(filepath))
+    if m is None or not hasattr(m, "info"):
         return None
+    info = m.info
+    meta: Dict[str, str] = {"Format": filepath.suffix.lstrip(".").upper()}
+    if hasattr(info, "channels"):
+        meta["Channels"] = str(info.channels)
+    if hasattr(info, "length"):
+        meta["Duration"] = f"{info.length:.2f}s"
+    if hasattr(info, "sample_rate"):
+        meta["SampleRate"] = str(info.sample_rate)
+    return meta
 
 
 def extract_wav_metadata(filepath: pathlib.Path) -> Optional[Dict[str, str]]:
-    try:
-        with wave.open(str(filepath), "rb") as wf:
-            channels = wf.getnchannels()
-            framerate = wf.getframerate()
-            frames = wf.getnframes()
-            duration = frames / framerate if framerate else 0
-            return {
-                "Format": "WAV",
-                "Channels": str(channels),
-                "SampleRate": str(framerate),
-                "Duration": f"{duration:.2f}s",
-            }
-    except Exception:
-        return None
+    """Extract WAV file metadata using the standard library wave module."""
+    import wave
+
+    with wave.open(str(filepath), "rb") as wf:
+        channels = wf.getnchannels()
+        framerate = wf.getframerate()
+        frames = wf.getnframes()
+        duration = frames / framerate if framerate else 0
+        return {
+            "Format": "WAV",
+            "Channels": str(channels),
+            "SampleRate": str(framerate),
+            "Duration": f"{duration:.2f}s",
+        }
 
 
 def get_binary_metadata(filepath: pathlib.Path) -> Optional[Dict[str, str]]:
@@ -315,15 +457,19 @@ def generate_project_context(
     cli_exclude_patterns: List[str],
     output_file_abs: Optional[pathlib.Path],
     verbose: bool = False,
+    max_tokens: Optional[int] = None,
 ) -> str:
     gitignore_patterns = read_gitignore_patterns(root_dir)
     combined_output_parts = ["--- START PROJECT CONTEXT ---"]
     processed_files_count = 0
     excluded_items_count = 0
-    
+    total_tokens = 0
+
     # Statistics for verbose mode
     excluded_items = []  # List of (path, reason) tuples
     file_sizes = []  # List of (path, size) tuples for processed files
+    file_tokens = []  # List of (path, tokens) tuples for processed files
+    skipped_for_tokens = []  # List of (path, estimated_tokens) for files skipped due to token limit
 
     script_abs_path = pathlib.Path(__file__).resolve(strict=False)
 
@@ -419,7 +565,45 @@ def generate_project_context(
 
                 file_size = filepath_abs.stat().st_size
                 is_binary = is_likely_binary(filepath_abs)
+
+                # For text files, estimate tokens before adding
+                file_content = None
+                file_token_count = 0
+                if not is_binary:
+                    try:
+                        file_content = filepath_abs.read_text(
+                            encoding="utf-8", errors="surrogateescape"
+                        )
+                        file_token_count = estimate_tokens(file_content)
+
+                        # Check if adding this file would exceed max_tokens
+                        if (
+                            max_tokens
+                            and (total_tokens + file_token_count) > max_tokens
+                        ):
+                            skipped_for_tokens.append(
+                                (filepath_rel_posix, file_token_count)
+                            )
+                            if verbose:
+                                logger.info(
+                                    "Skipping file (token limit): %s (~%s tokens)",
+                                    filepath_rel_posix,
+                                    format_token_count(file_token_count),
+                                )
+                            continue
+                    except OSError as e:
+                        combined_output_parts.append(f"--- ERROR READING FILE: {e} ---")
+                        continue
+                    except UnicodeDecodeError as e:
+                        combined_output_parts.append(
+                            f"--- ERROR READING FILE: Could not decode as UTF-8 ({e}). ---"
+                        )
+                        continue
+
                 file_sizes.append((filepath_rel_posix, file_size))
+                file_tokens.append((filepath_rel_posix, file_token_count))
+                total_tokens += file_token_count
+
                 combined_output_parts.append(
                     f"--- START FILE: {filepath_rel_posix} ---"
                 )
@@ -427,7 +611,7 @@ def generate_project_context(
                 if is_binary:
                     combined_output_parts.extend(
                         [
-                            f"--- BINARY FILE METADATA ---",
+                            "--- BINARY FILE METADATA ---",
                             f"Path: {filepath_rel_posix}",
                             f"Size: {format_file_size(file_size)}",
                         ]
@@ -437,24 +621,14 @@ def generate_project_context(
                         for k, v in extra_meta.items():
                             combined_output_parts.append(f"{k}: {v}")
                 else:
-                    try:
-                        content = filepath_abs.read_text(
-                            encoding="utf-8", errors="surrogateescape"
-                        )
-                        lang_hint = (
-                            filepath_rel.suffix.lstrip(".")
-                            if filepath_rel.suffix
-                            else ""
-                        )
-                        combined_output_parts.extend(
-                            [f"```{lang_hint}", content.strip(), "```"]
-                        )
-                    except OSError as e:
-                        combined_output_parts.append(f"--- ERROR READING FILE: {e} ---")
-                    except UnicodeDecodeError as e:
-                        combined_output_parts.append(
-                            f"--- ERROR READING FILE: Could not decode as UTF-8 ({e}). ---"
-                        )
+                    lang_hint = (
+                        filepath_rel.suffix.lstrip(".") if filepath_rel.suffix else ""
+                    )
+                    # file_content is guaranteed non-None here since we're in the else branch
+                    assert file_content is not None
+                    combined_output_parts.extend(
+                        [f"```{lang_hint}", file_content.strip(), "```"]
+                    )
 
                 combined_output_parts.append(
                     f"--- END FILE: {filepath_rel_posix} ---\n"
@@ -482,41 +656,65 @@ def generate_project_context(
 
     combined_output_parts.extend(["--- END PROJECT CONTEXT ---"])
 
-    # Print summary statistics
-    if verbose or processed_files_count > 0 or excluded_items_count > 0:
-        logger.info(
-            "Processed %s files, excluded %s files/directories.",
-            processed_files_count,
-            excluded_items_count,
+    # Always print summary with token count (to stderr)
+    logger.warning(
+        "Processed %d files (~%s tokens)",
+        processed_files_count,
+        format_token_count(total_tokens),
+    )
+
+    # Warn about token thresholds
+    if total_tokens > 1_000_000:
+        logger.warning(
+            "Warning: Output exceeds 1M tokens - larger than all current LLM contexts"
         )
+    elif total_tokens > 200_000:
+        logger.warning(
+            "Warning: Output exceeds 200K tokens - larger than Claude Sonnet context"
+        )
+    elif total_tokens > 128_000:
+        logger.warning(
+            "Warning: Output exceeds 128K tokens - larger than GPT-4 Turbo context"
+        )
+
+    # Report skipped files due to token limit
+    if skipped_for_tokens:
+        logger.warning(
+            "Skipped %d files exceeding token budget:",
+            len(skipped_for_tokens),
+        )
+        for path, tokens in skipped_for_tokens:
+            logger.warning("  - %s (~%s tokens)", path, format_token_count(tokens))
 
     # Print detailed verbose information
     if verbose:
+        logger.info("Excluded %d files/directories.", excluded_items_count)
+
         # Print excluded items summary
         if excluded_items:
             logger.info("\n--- EXCLUDED FILES AND DIRECTORIES ---")
             for path, reason in excluded_items:
                 logger.info("  %s - %s", path, reason)
-        
-        # Print top 10 largest files by size
-        if file_sizes:
-            logger.info("\n--- TOP 10 LARGEST FILES ---")
-            sorted_files = sorted(file_sizes, key=lambda x: x[1], reverse=True)[:10]
-            for path, size in sorted_files:
-                logger.info("  %s - %s", format_file_size(size), path)
-        
+
+        # Print top 10 largest files by token count
+        if file_tokens:
+            logger.info("\n--- TOP 10 LARGEST FILES (by tokens) ---")
+            sorted_files = sorted(file_tokens, key=lambda x: x[1], reverse=True)[:10]
+            for path, tokens in sorted_files:
+                logger.info("  ~%s tokens - %s", format_token_count(tokens), path)
+
         # Print file type distribution
-        file_types = {}
+        file_types: Dict[str, int] = {}
         for path, _ in file_sizes:
             ext = pathlib.Path(path).suffix.lower() or "no extension"
             file_types[ext] = file_types.get(ext, 0) + 1
-        
+
         if file_types:
             logger.info("\n--- FILE TYPE DISTRIBUTION ---")
             sorted_types = sorted(file_types.items(), key=lambda x: x[1], reverse=True)
             for ext, count in sorted_types:
                 logger.info("  %s: %d files", ext, count)
-        
+
         # Print total size of processed files
         total_size = sum(size for _, size in file_sizes)
         logger.info("\n--- TOTAL SIZE OF PROCESSED FILES ---")
@@ -571,6 +769,13 @@ def main():
         action="store_true",
         help="Print a suggested detailed LLM query to stderr after processing.",
     )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Skip files that would exceed this token budget. Uses chars/4 estimation.",
+    )
     # Version argument
     parser.add_argument(
         "--version",
@@ -605,20 +810,19 @@ def main():
 
     try:
         output_text = generate_project_context(
-            root_dir_abs, args.exclude, output_file_abs_path, args.verbose
+            root_dir_abs,
+            args.exclude,
+            output_file_abs_path,
+            args.verbose,
+            args.max_tokens,
         )
-
-        token_estimate = len(output_text.split())
-        if token_estimate > 1_000_000:
-            logger.warning(
-                "Generated context is approximately %s tokens which may exceed typical LLM limits",
-                token_estimate,
-            )
 
         if output_file_abs_path:
             try:
                 output_file_abs_path.parent.mkdir(parents=True, exist_ok=True)
-                output_file_abs_path.write_text(output_text, encoding="utf-8", errors="surrogateescape")
+                output_file_abs_path.write_text(
+                    output_text, encoding="utf-8", errors="surrogateescape"
+                )
                 if args.verbose:
                     logger.info(
                         "Output successfully written to: %s",

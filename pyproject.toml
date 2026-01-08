@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llmcontext"
-version = "0.2.4"
+version = "0.3.0"
 description = "Generates project context for LLMs, respecting .gitignore."
 readme = "README.md" 
 requires-python = ">=3.8" # Specify minimum Python version
@@ -32,3 +32,9 @@ llmcontext = "llmcontext:main"
 [project.urls]
 "Homepage" = "https://github.com/speakman/llmcontext"
 "Bug Tracker" = "https://github.com/speakman/llmcontext/issues"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.14.1",
+    "ruff>=0.14.10",
+]

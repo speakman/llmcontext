@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llmcontext"
-version = "0.3.0"
+version = "0.4.0"
 description = "Generates project context for LLMs, respecting .gitignore."
 readme = "README.md" 
 requires-python = ">=3.8" # Specify minimum Python version
@@ -25,6 +25,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest"]
+tiktoken = ["tiktoken>=0.5"]
 
 [project.scripts]
 llmcontext = "llmcontext:main"
@@ -35,6 +36,7 @@ llmcontext = "llmcontext:main"
 
 [dependency-groups]
 dev = [
+    "basedpyright>=1.37.0",
     "mypy>=1.14.1",
     "ruff>=0.14.10",
 ]

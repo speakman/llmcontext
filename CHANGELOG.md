@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-01-08
+### Changed (BREAKING)
+- Default output format is now "compact" with minimal markers (~15% token reduction)
+  - Use `--format standard` for the previous verbose format
+- `estimate_tokens()` signature changed: added `model` and `use_tiktoken` parameters
+
+### Added
+- `--format` flag: `compact` (default), `standard`
+- `--model` flag for model-specific token estimation heuristics (claude, gpt-4, llama)
+- `--tokenizer` flag: `heuristic` (default), `tiktoken`
+- Optional tiktoken support for accurate GPT token counts: `pip install llmcontext[tiktoken]`
+- Format helper functions: `format_file_header`, `format_file_footer`, `format_binary_metadata`, `format_project_header`, `format_project_footer`
+
 ## [0.3.0] - 2026-01-08
 ### Added
 - Token tracking with `chars/4` estimation

@@ -63,9 +63,9 @@ def test_generate_context_and_cli(tmp_path: Path) -> None:
     write_binary(tmp_path / "sound.wav", WAV_B64)
     (tmp_path / "hello.txt").write_text("hello")
 
+    # Test compact format (default)
     ctx = lc.generate_project_context(tmp_path, [], None, False)
-    assert "Format: PNG" in ctx
-    assert "Format: WAV" in ctx
+    assert "[BINARY:" in ctx  # Compact binary format
     assert "hello" in ctx
 
     out_file = tmp_path / "out.txt"
@@ -75,15 +75,50 @@ def test_generate_context_and_cli(tmp_path: Path) -> None:
         text=True,
     )
     assert proc.returncode == 0
-    assert out_file.read_text().startswith("--- START PROJECT CONTEXT ---")
+    assert out_file.read_text().startswith("# Project Context")
+
+    # Test standard format
+    ctx_std = lc.generate_project_context(
+        tmp_path, [], None, False, output_format="standard"
+    )
+    assert "Format: PNG" in ctx_std
+    assert "Format: WAV" in ctx_std
+    assert "--- START PROJECT CONTEXT ---" in ctx_std
 
 
 def test_estimate_tokens() -> None:
-    """Test token estimation using chars/4 heuristic."""
+    """Test token estimation with default heuristic."""
     assert lc.estimate_tokens("") == 0
     assert lc.estimate_tokens("a" * 4) == 1
     assert lc.estimate_tokens("a" * 100) == 25
     assert lc.estimate_tokens("hello world") == 2  # 11 chars / 4 = 2
+
+
+def test_estimate_tokens_model_specific() -> None:
+    """Test model-specific token estimation heuristics."""
+    text = "x" * 100
+
+    # Default (GPT-like): chars/4
+    assert lc.estimate_tokens(text) == 25
+
+    # Claude: chars/3.5 = 28.57 -> 28
+    assert lc.estimate_tokens(text, model="claude") == 28
+    assert lc.estimate_tokens(text, model="Claude-3-Sonnet") == 28
+    assert lc.estimate_tokens(text, model="anthropic-claude") == 28
+
+    # Llama: chars/3.8 = 26.31 -> 26
+    assert lc.estimate_tokens(text, model="llama") == 26
+    assert lc.estimate_tokens(text, model="llama-3.1-70b") == 26
+    assert lc.estimate_tokens(text, model="meta-llama") == 26
+
+    # GPT models use default
+    assert lc.estimate_tokens(text, model="gpt-4") == 25
+    assert lc.estimate_tokens(text, model="gpt-4-turbo") == 25
+
+    # Gemini uses same as GPT
+    assert lc.estimate_tokens(text, model="gemini") == 25
+    assert lc.estimate_tokens(text, model="gemini-3") == 25
+    assert lc.estimate_tokens(text, model="google-gemini-pro") == 25
 
 
 def test_format_token_count() -> None:
@@ -104,7 +139,7 @@ def test_format_file_size() -> None:
     assert lc.format_file_size(1024) == "1.0 KB"
     assert lc.format_file_size(1536) == "1.5 KB"
     assert lc.format_file_size(1024 * 1024) == "1.0 MB"
-    assert lc.format_file_size(1024 * 1024 * 1.5) == "1.5 MB"
+    assert lc.format_file_size(int(1024 * 1024 * 1.5)) == "1.5 MB"
 
 
 def test_max_tokens_skips_large_files(tmp_path: Path) -> None:
@@ -117,3 +152,75 @@ def test_max_tokens_skips_large_files(tmp_path: Path) -> None:
     ctx = lc.generate_project_context(tmp_path, [], None, False, max_tokens=100)
     assert "small.txt" in ctx
     assert "large.txt" not in ctx
+
+
+# --- Format Function Tests ---
+
+
+def test_format_project_header() -> None:
+    """Test project header formatting."""
+    assert lc.format_project_header("compact") == "# Project Context\n"
+    assert lc.format_project_header("standard") == "--- START PROJECT CONTEXT ---"
+
+
+def test_format_project_footer() -> None:
+    """Test project footer formatting."""
+    assert lc.format_project_footer("compact") == ""
+    assert lc.format_project_footer("standard") == "--- END PROJECT CONTEXT ---"
+
+
+def test_format_file_header() -> None:
+    """Test file header formatting."""
+    assert lc.format_file_header("src/main.py", "compact") == "## FILE: src/main.py"
+    assert (
+        lc.format_file_header("src/main.py", "standard")
+        == "--- START FILE: src/main.py ---"
+    )
+
+
+def test_format_file_footer() -> None:
+    """Test file footer formatting."""
+    assert lc.format_file_footer("src/main.py", "compact") == ""
+    assert "END FILE" in lc.format_file_footer("src/main.py", "standard")
+
+
+def test_format_binary_metadata_compact_image() -> None:
+    """Test compact binary metadata for images."""
+    meta = {"Format": "PNG", "Width": "256", "Height": "256"}
+    result = lc.format_binary_metadata("logo.png", meta, "45.3 KB", "compact")
+    assert result == ["[BINARY: PNG 256×256, 45.3 KB]"]
+
+
+def test_format_binary_metadata_compact_audio() -> None:
+    """Test compact binary metadata for audio with duration."""
+    meta = {"Format": "WAV", "Duration": "2.34s", "Channels": "2"}
+    result = lc.format_binary_metadata("sound.wav", meta, "1.2 MB", "compact")
+    assert result == ["[BINARY: WAV 2.34s, 1.2 MB]"]
+
+
+def test_format_binary_metadata_compact_no_meta() -> None:
+    """Test compact binary metadata without extra metadata."""
+    result = lc.format_binary_metadata("data.bin", None, "100 KB", "compact")
+    assert result == ["[BINARY: 100 KB]"]
+
+
+def test_format_binary_metadata_standard() -> None:
+    """Test standard binary metadata format."""
+    meta = {"Format": "PNG", "Width": "256", "Height": "256"}
+    result = lc.format_binary_metadata("logo.png", meta, "45.3 KB", "standard")
+    assert "--- BINARY FILE METADATA ---" in result
+    assert "Path: logo.png" in result
+    assert "Size: 45.3 KB" in result
+    assert "Format: PNG" in result
+    assert "Width: 256" in result
+
+
+def test_compact_output_is_smaller(tmp_path: Path) -> None:
+    """Verify compact format produces smaller output than standard."""
+    (tmp_path / "test.py").write_text("print('hello world')")
+    (tmp_path / "utils.py").write_text("def helper(): pass")
+
+    compact = lc.generate_project_context(tmp_path, [], None, output_format="compact")
+    standard = lc.generate_project_context(tmp_path, [], None, output_format="standard")
+
+    assert len(compact) < len(standard)

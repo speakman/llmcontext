@@ -369,13 +369,53 @@ def format_file_size(size_bytes: int) -> str:
     return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
-def estimate_tokens(text: str) -> int:
-    """Estimate token count using chars/4 heuristic.
+def estimate_tokens_tiktoken(text: str, model: str = "gpt-4") -> int:
+    """Estimate tokens using tiktoken (100% accurate for GPT models).
 
-    This is a rough approximation that works reasonably well for code
-    without requiring external dependencies like tiktoken.
+    Requires tiktoken to be installed: pip install llmcontext[tiktoken]
     """
-    return len(text) // 4
+    import tiktoken
+
+    try:
+        enc = tiktoken.encoding_for_model(model)
+    except KeyError:
+        enc = tiktoken.get_encoding("cl100k_base")
+    return len(enc.encode(text))
+
+
+def estimate_tokens(
+    text: str,
+    model: Optional[str] = None,
+    use_tiktoken: bool = False,
+) -> int:
+    """Estimate token count with model-specific heuristics.
+
+    Args:
+        text: The text to estimate tokens for
+        model: Optional model name for model-specific heuristics
+        use_tiktoken: If True, use tiktoken for accurate GPT token counts
+
+    Heuristics based on tokenizer research:
+    - Claude: ~3.5 chars/token (Anthropic docs)
+    - GPT-4: ~4 chars/token (OpenAI typical)
+    - Gemini: ~4 chars/token (similar to GPT)
+    - Llama: ~3.8 chars/token (Meta research)
+    """
+    if use_tiktoken:
+        try:
+            return estimate_tokens_tiktoken(text, model or "gpt-4")
+        except ImportError:
+            logger.warning("tiktoken not installed, falling back to heuristic")
+
+    if model:
+        model_lower = model.lower()
+        if "claude" in model_lower or "anthropic" in model_lower:
+            return int(len(text) / 3.5)
+        if "llama" in model_lower or "meta" in model_lower:
+            return int(len(text) / 3.8)
+        if "gemini" in model_lower or "google" in model_lower:
+            return len(text) // 4  # Gemini uses similar tokenization to GPT
+    return len(text) // 4  # Default: GPT-like
 
 
 def format_token_count(tokens: int) -> str:
@@ -385,6 +425,64 @@ def format_token_count(tokens: int) -> str:
     if tokens < 1_000_000:
         return f"{tokens / 1000:.1f}K"
     return f"{tokens / 1_000_000:.2f}M"
+
+
+# --- Output Format Functions ---
+
+
+def format_project_header(output_format: str) -> str:
+    """Format the project context header."""
+    if output_format == "compact":
+        return "# Project Context\n"
+    return "--- START PROJECT CONTEXT ---"
+
+
+def format_project_footer(output_format: str) -> str:
+    """Format the project context footer."""
+    if output_format == "compact":
+        return ""
+    return "--- END PROJECT CONTEXT ---"
+
+
+def format_file_header(path: str, output_format: str) -> str:
+    """Format a file header."""
+    if output_format == "compact":
+        return f"## FILE: {path}"
+    return f"--- START FILE: {path} ---"
+
+
+def format_file_footer(path: str, output_format: str) -> str:
+    """Format a file footer."""
+    if output_format == "compact":
+        return ""
+    return f"--- END FILE: {path} ---\n"
+
+
+def format_binary_metadata(
+    path: str,
+    meta: Optional[Dict[str, str]],
+    size: str,
+    output_format: str,
+) -> List[str]:
+    """Format binary file metadata.
+
+    Returns a list of lines to add to the output.
+    """
+    if output_format == "compact":
+        if meta:
+            info_parts = [meta.get("Format", "BINARY")]
+            if "Width" in meta and "Height" in meta:
+                info_parts.append(f"{meta['Width']}×{meta['Height']}")
+            elif "Duration" in meta:
+                info_parts.append(meta["Duration"])
+            return [f"[BINARY: {' '.join(info_parts)}, {size}]"]
+        return [f"[BINARY: {size}]"]
+    # Standard format: multiple lines
+    lines = ["--- BINARY FILE METADATA ---", f"Path: {path}", f"Size: {size}"]
+    if meta:
+        for k, v in meta.items():
+            lines.append(f"{k}: {v}")
+    return lines
 
 
 def extract_image_metadata(filepath: pathlib.Path) -> Optional[Dict[str, str]]:
@@ -458,9 +556,12 @@ def generate_project_context(
     output_file_abs: Optional[pathlib.Path],
     verbose: bool = False,
     max_tokens: Optional[int] = None,
+    output_format: str = "compact",
+    model: Optional[str] = None,
+    use_tiktoken: bool = False,
 ) -> str:
     gitignore_patterns = read_gitignore_patterns(root_dir)
-    combined_output_parts = ["--- START PROJECT CONTEXT ---"]
+    combined_output_parts = [format_project_header(output_format)]
     processed_files_count = 0
     excluded_items_count = 0
     total_tokens = 0
@@ -574,7 +675,9 @@ def generate_project_context(
                         file_content = filepath_abs.read_text(
                             encoding="utf-8", errors="surrogateescape"
                         )
-                        file_token_count = estimate_tokens(file_content)
+                        file_token_count = estimate_tokens(
+                            file_content, model=model, use_tiktoken=use_tiktoken
+                        )
 
                         # Check if adding this file would exceed max_tokens
                         if (
@@ -605,21 +708,19 @@ def generate_project_context(
                 total_tokens += file_token_count
 
                 combined_output_parts.append(
-                    f"--- START FILE: {filepath_rel_posix} ---"
+                    format_file_header(filepath_rel_posix, output_format)
                 )
 
                 if is_binary:
-                    combined_output_parts.extend(
-                        [
-                            "--- BINARY FILE METADATA ---",
-                            f"Path: {filepath_rel_posix}",
-                            f"Size: {format_file_size(file_size)}",
-                        ]
-                    )
                     extra_meta = get_binary_metadata(filepath_abs)
-                    if extra_meta:
-                        for k, v in extra_meta.items():
-                            combined_output_parts.append(f"{k}: {v}")
+                    combined_output_parts.extend(
+                        format_binary_metadata(
+                            filepath_rel_posix,
+                            extra_meta,
+                            format_file_size(file_size),
+                            output_format,
+                        )
+                    )
                 else:
                     lang_hint = (
                         filepath_rel.suffix.lstrip(".") if filepath_rel.suffix else ""
@@ -630,9 +731,9 @@ def generate_project_context(
                         [f"```{lang_hint}", file_content.strip(), "```"]
                     )
 
-                combined_output_parts.append(
-                    f"--- END FILE: {filepath_rel_posix} ---\n"
-                )
+                footer = format_file_footer(filepath_rel_posix, output_format)
+                if footer:
+                    combined_output_parts.append(footer)
                 processed_files_count += 1
 
             except OSError as e:
@@ -654,7 +755,9 @@ def generate_project_context(
                         e,
                     )
 
-    combined_output_parts.extend(["--- END PROJECT CONTEXT ---"])
+    footer = format_project_footer(output_format)
+    if footer:
+        combined_output_parts.append(footer)
 
     # Always print summary with token count (to stderr)
     logger.warning(
@@ -774,7 +877,26 @@ def main():
         type=int,
         default=None,
         metavar="N",
-        help="Skip files that would exceed this token budget. Uses chars/4 estimation.",
+        help="Skip files that would exceed this token budget.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["compact", "standard"],
+        default="compact",
+        help="Output format: 'compact' (default) uses minimal markers, 'standard' uses verbose markers.",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        metavar="MODEL",
+        help="Model for token estimation heuristics: claude, gpt-4, llama, etc.",
+    )
+    parser.add_argument(
+        "--tokenizer",
+        choices=["heuristic", "tiktoken"],
+        default="heuristic",
+        help="Tokenizer for token counting: 'heuristic' (default) or 'tiktoken' (requires pip install llmcontext[tiktoken]).",
     )
     # Version argument
     parser.add_argument(
@@ -815,6 +937,9 @@ def main():
             output_file_abs_path,
             args.verbose,
             args.max_tokens,
+            output_format=args.format,
+            model=args.model,
+            use_tiktoken=(args.tokenizer == "tiktoken"),
         )
 
         if output_file_abs_path:
